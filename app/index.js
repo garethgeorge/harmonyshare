@@ -10,6 +10,8 @@ const config = require("../config");
 const FileShare = require("./model/fileshare");
 const fileShares = {};
 
+const DEFAULT_CHUNK_SIZE = config.CHUNK_SIZE_BYTES;
+
 const awaitEvent = async (emitter, event) => {
   return new Promise((accept) => {
     emitter.once(event, accept);
