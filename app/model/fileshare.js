@@ -52,8 +52,8 @@ module.exports = class FileShare {
         } else {
           if (!this.requestedChunks[chunkIdx]) {
             debug("getChunk() requesting chunk %o from client", chunkIdx);
+            this.requestedChunks[chunkIdx] = true;
             this.socket.emit("server:request-chunk", chunkIdx);
-            delete this.requestedChunks[chunkIdx];
           } else
             debug(
               "getChunk(): chunk %o has been requested, waiting for result",
