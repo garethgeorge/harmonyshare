@@ -114,7 +114,12 @@
           // );
 
           const fileURL =
-            "http://" + window.location.host + "/f/" + sessionInfo.id;
+            "http://" +
+            window.location.host +
+            "/f/" +
+            sessionInfo.id +
+            "/" +
+            encodeURI(file.name);
 
           $(uploadingStatsDiv).append(
             "<div><strong>Public File Link: </strong><a href='" +
