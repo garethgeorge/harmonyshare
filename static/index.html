@@ -34,13 +34,14 @@
       background-color: rgba(255, 255, 255, 0.1);
     }
 
-    #content {
+    .content {
       background-color: rgba(255, 255, 255, 0.1);
       border-radius: 10px;
     }
 
-    #uploadingstats {
-      margin: 20px;
+    .uploadstats {
+      margin: 10px;
+      padding: 10px;
     }
 
     a {
@@ -58,44 +59,19 @@
   </style>
 
   <body>
-    <div class="container">
+    <div class="container" id="wrapper">
       <h1 style="text-align: center">HarmonyShare</h1>
       <br />
 
-      <div id="content">
+      <div class="content">
         <div id="dropzone">
           Drop Files Here
-        </div>
-
-        <div id="uploadingstats">
-          <div id="uploadinfo"></div>
         </div>
       </div>
     </div>
   </body>
 
   <script>
-    const socket = io.connect("/sharefile");
-    let sessionInfo = null;
-    let file = null;
-    let fileInfo = null;
-
-    socket.on("server:session-info", (_sessionInfo) => {
-      sessionInfo = _sessionInfo;
-    });
-
-    socket.on("server:request-chunk", (chunkIdx) => {
-      file
-        .slice(
-          sessionInfo.chunkSize * chunkIdx,
-          sessionInfo.chunkSize * (chunkIdx + 1)
-        )
-        .arrayBuffer()
-        .then((buffer) => {
-          socket.emit("client:send-chunk", chunkIdx, buffer);
-        });
-    });
-
     // Setup the dnd listeners.
     var dropZone = document.getElementById("dropzone");
     dropZone.addEventListener(
@@ -115,36 +91,74 @@
 
         const files = evt.dataTransfer.files; // FileList object.
 
-        file = files[0];
+        const socket = io.connect("/sharefile");
+        let sessionInfo = null;
+        let file = files[0];
+        let fileInfo = null;
+        console.log("opening a socket to handle the drop... ", socket);
 
-        const dropZone = document.getElementById("dropzone");
-        dropZone.parentElement.removeChild(dropZone);
-        document.getElementById("uploadingstats").style.visibility = "visible";
+        socket.on("server:session-info", (_sessionInfo) => {
+          sessionInfo = _sessionInfo;
 
-        $("#uploadinfo").append(
-          "<div><strong>Sharing File:</strong> " + file.name + "</div>"
-        );
-        $("#uploadinfo").append(
-          "<div><strong>Share UUID:</strong> " + sessionInfo.id + "</div>"
-        );
+          // const dropZone = document.getElementById("dropzone");
+          // dropZone.parentElement.removeChild(dropZone);
 
-        const fileURL =
-          "http://" + window.location.host + "/share/" + sessionInfo.id;
-        $("#uploadinfo").append(
-          "<div><strong>File Share Link: </strong><a href='" +
-            fileURL +
-            "' target='_blank'>" +
-            fileURL +
-            "</a></div>"
-        );
+          const uploadingStatsDiv = $("<div class='content uploadstats' />");
 
-        fileInfo = {
-          mimetype: file.type,
-          fileName: file.name,
-          fileSize: file.size,
-        };
+          $(uploadingStatsDiv).append(
+            "<div><strong>Stream Source File:</strong> " + file.name + "</div>"
+          );
 
-        socket.emit("client:file-info", fileInfo);
+          // $(uploadingStatsDiv).append(
+          //   "<div><strong>Share UUID:</strong> " + sessionInfo.id + "</div>"
+          // );
+
+          const fileURL =
+            "http://" + window.location.host + "/f/" + sessionInfo.id;
+
+          $(uploadingStatsDiv).append(
+            "<div><strong>Public File Link: </strong><a href='" +
+              fileURL +
+              "' target='_blank'>" +
+              fileURL +
+              "</a></div>"
+          );
+
+          fileInfo = {
+            mimetype: file.type,
+            fileName: file.name,
+            fileSize: file.size,
+          };
+
+          socket.emit("client:file-info", fileInfo);
+
+          $("#wrapper").append(uploadingStatsDiv);
+          console.log("appending to ", $("#wrapper"));
+        });
+
+        socket.on("server:request-chunk", (chunkIdx) => {
+          file
+            .slice(
+              sessionInfo.chunkSize * chunkIdx,
+              sessionInfo.chunkSize * (chunkIdx + 1)
+            )
+            .arrayBuffer()
+            .then((buffer) => {
+              // socket.emit("client:send-chunk", chunkIdx, buffer);
+              const xhr = new XMLHttpRequest();
+              xhr.open(
+                "POST",
+                "/f/" +
+                  encodeURI(sessionInfo.id) +
+                  "/api/deliverChunk/" +
+                  chunkIdx +
+                  "?secret=" +
+                  encodeURI(sessionInfo.ownerSecret)
+              );
+              xhr.setRequestHeader("Content-Type", "application/octet-stream");
+              xhr.send(buffer);
+            });
+        });
       },
       false
     );

@@ -1,7 +1,10 @@
 const http = require("http");
 const app = require("express")();
 const parseRange = require("range-parser");
-const debug = require("debug");
+const debug = require("debug")("app");
+const express = require("express");
+const morgan = require("morgan");
+const bodyParser = require("body-parser");
 
 const FileShare = require("./model/fileshare");
 const fileShares = {};
@@ -12,114 +15,90 @@ const awaitEvent = async (emitter, event) => {
   });
 };
 
+const DEFAULT_CHUNK_SIZE = 1024 * 1024;
+
 /*
-app.get("/share/:shareId/:anything", async (req, res) => {
-  const filePath = path.join("media", req.params.file);
-  const stats = await util.promisify(fs.stat)(filePath);
-
-  let rangeStart = 0;
-  let rangeStop = stats.size;
-  if (req.headers.range) {
-    const range = parseRange(stats.size, req.headers.range);
-    if (range.length > 0) {
-      console.log("DETECTED A RANGE HEADER PRESENT", JSON.stringify(range));
-      rangeStart = range[0].start ? range[0].start : rangeStart;
-      rangeStop = range[0].end ? range[0].end + 1 : rangeStop;
-    }
-  }
-  console.log("determined to return ", rangeStart, " - ", rangeStop);
-
-  const fd = await util.promisify(fs.open)(filePath, "r");
-  try {
-    const chunkSize = 64 * 1024;
-    const buffer = Buffer.alloc(chunkSize);
-
-    if (req.headers.range) {
-      res.status(206);
-    } else {
-      res.status(200);
-    }
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Accept-Ranges", "bytes");
-    res.setHeader(
-      "Content-Range",
-      `bytes ${rangeStart}-${rangeStop - 1}/${stats.size}`
-    );
-    res.setHeader("Content-length", rangeStop - rangeStart);
-    res.flushHeaders();
-
-    console.log("beginning stream...", rangeStart, rangeStop);
-    for (let lower = rangeStart; lower < rangeStop; lower += chunkSize) {
-      const upper = Math.min(rangeStop, lower + chunkSize);
-      const len = upper - lower;
-      await new Promise((accept, reject) => {
-        fs.read(fd, buffer, 0, len, lower, (err, bytesRead, buffer) => {
-          accept();
-        });
-      });
-
-      const ok = res.write(
-        len == buffer.length ? buffer : buffer.slice(0, len),
-        "binary"
-      );
-      if (!ok) {
-        await awaitEvent(res, "drain");
-      }
-    }
-    res.end();
-  } finally {
-    await util.promisify(fs.close)(fd);
-  }
-});
+  handle requests for a file share
 */
 
-app.get("/share/:shareId", async (req, res) => {
+app.use(morgan("combined"));
+
+const fileRouter = express.Router({ mergeParams: true });
+app.use("/f/:shareId", fileRouter);
+
+fileRouter.use((req, res, next) => {
   const share = fileShares[req.params.shareId];
   if (!share) {
     res.status(404);
-    return res.end("share not found");
+    return res.end("share not found or no longer available");
   }
-  if (!share.fileInfo) {
-    return res.end("share not ready yet");
-  }
+  req.share = share;
 
-  if (req.params.filename != share.fileName) {
-    return res.redirect(
-      "/share/" + req.params.shareId + "/" + encodeURI(share.fileName)
-    );
-  }
+  next();
 });
 
-app.get("/share/:shareId/:filename", async (req, res) => {
-  const share = fileShares[req.params.shareId];
-  if (!share) {
-    res.status(404);
-    return res.end("share not found");
+fileRouter.post("/api/deliverChunk/:chunkIdx", async (req, res) => {
+  // check that they are authorized to deliver a chunk
+  const share = req.share;
+  if (req.query.secret !== share.ownerSecret) {
+    debug("request to deliver chunk was not authorized");
+    req.pause();
+    return res.end("Not Authorized");
   }
+
+  // // set encoding to binary and read the request
+  req.setEncoding("binary");
+  const buffers = [];
+  let totalSize = 0;
+  req.on("data", (chunk) => {
+    if (totalSize > DEFAULT_CHUNK_SIZE * 1.5) {
+      req.pause();
+      return res.end("TOO LARGE");
+    }
+    totalSize += chunk.length;
+    buffers.push(Buffer.from(chunk, "binary"));
+  });
+
+  await awaitEvent(req, "end");
+
+  // great, okay we have the chunkIdx and the object, lets deliver it
+  const chunkIdx = parseInt(req.params.chunkIdx);
+  const object = Buffer.concat(buffers);
+  debug("chunk " + chunkIdx + " was delivered, bytes: " + object.length);
+  await share.deliverChunk(chunkIdx, object);
+  res.end("SUCCESS");
+});
+
+fileRouter.get("/", (req, res) => {
+  const share = req.share;
+  return res.redirect(
+    "/f/" + req.params.shareId + "/" + encodeURI(share.fileName)
+  );
+});
+
+fileRouter.get("/:filename", async (req, res) => {
+  const share = req.share;
   if (!share.fileInfo) {
     return res.end("share not ready yet");
   }
 
+  debug("received request for file: " + share.fileName);
+
   const fileSize = share.fileSize;
-  const fileName = share.fileName;
-  if (req.params.filename != fileName) {
-    return res.redirect(
-      "/share/" + req.params.shareId + "/" + encodeURI(fileName)
-    );
-  }
 
   let rangeStart = 0;
   let rangeStop = fileSize;
   if (req.headers.range) {
     const range = parseRange(fileSize, req.headers.range);
     if (range.length > 0) {
-      console.log("DETECTED A RANGE HEADER PRESENT", JSON.stringify(range));
+      debug("range header was present on request: " + JSON.stringify(range));
       rangeStart = range[0].start ? range[0].start : rangeStart;
       rangeStop = range[0].end ? range[0].end + 1 : rangeStop;
     }
   }
-  debug("determined to return ", rangeStart, " - ", rangeStop);
 
+  debug("determined to return byte range " + rangeStart + " - " + rangeStop);
+  debug("using chunk size: " + share.chunkSize);
   const chunkSize = share.chunkSize;
 
   if (req.headers.range) {
@@ -136,31 +115,23 @@ app.get("/share/:shareId/:filename", async (req, res) => {
   res.setHeader("Content-Length", rangeStop - rangeStart);
   res.flushHeaders();
 
-  debug("beginning stream...", rangeStart, rangeStop);
-
   // read the first chunk
   const startChunk = Math.floor(rangeStart / chunkSize);
   let startByteIdx = rangeStart % chunkSize;
   let bytesToSend = rangeStop - rangeStart;
 
-  debug("CHUNKS IN FILE: " + Math.ceil(fileSize / chunkSize));
-  debug("BYTES TO SEND INITIAL: ", bytesToSend);
+  debug("chunks in file: " + Math.ceil(fileSize / chunkSize));
+  debug("total bytes to send in request: ", bytesToSend);
 
   for (let curChunkIdx = startChunk; bytesToSend > 0; ++curChunkIdx) {
     let chunk = await share.getChunk(curChunkIdx);
     const ss = startByteIdx;
     const sf = Math.min(ss + bytesToSend, chunk.length);
-    debug("SS: " + ss + " SF: " + sf + " CHUNK.length: " + chunk.length);
+    debug("SS: " + ss + " SF: " + sf + " chunk.length: " + chunk.length);
     const toSend = chunk.slice(ss, sf);
     bytesToSend -= sf - ss;
     startByteIdx = 0;
-
-    console.log(
-      "PROCESSED CHUNK: " +
-        curChunkIdx +
-        " BYTES TO SEND REMAINING: " +
-        bytesToSend
-    );
+    debug("\tsent chunk: " + curChunkIdx + ", remaining bytes: " + bytesToSend);
 
     const ok = res.write(toSend);
     if (!ok) {
@@ -170,14 +141,19 @@ app.get("/share/:shareId/:filename", async (req, res) => {
   res.end();
 });
 
-app.use(require("express").static("./static"));
+/*
+  serve static files for the application
+*/
+app.use(express.static("./static"));
 
+/*
+  open to HTTP requests
+*/
 const server = http.createServer(app);
 const io = require("socket.io").listen(server);
 
 io.of("/sharefile").on("connection", (socket) => {
-  const chunkSize = 1024 * 1024; // 128k chunk size
-  const newShare = new FileShare(socket, chunkSize);
+  const newShare = new FileShare(socket, DEFAULT_CHUNK_SIZE);
   fileShares[newShare.id] = newShare;
 
   socket.on("disconnect", () => {
@@ -186,5 +162,5 @@ io.of("/sharefile").on("connection", (socket) => {
 });
 
 server.listen(3000, () => {
-  console.log("listening on port 3000");
+  debug("listening on port 3000");
 });

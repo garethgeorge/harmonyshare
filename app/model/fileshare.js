@@ -1,14 +1,17 @@
 const DiskCache = require("../../lib/diskcache");
 const AsyncLock = require("async-lock");
 const uuidv4 = require("uuid").v4;
+const debug = require("debug")("model:fileshare");
+const crypto = require("crypto");
 
-const cache = new DiskCache("./.cache");
+const cache = new DiskCache("./.cache", 8 * 1073741824);
 
 module.exports = class FileShare {
   constructor(socket, chunkSize) {
+    this.id = crypto.randomBytes(8).toString("hex");
+    this.ownerSecret = crypto.randomBytes(8).toString("hex"); // secret sent to owner, used to authenticate
     this.chunkSize = chunkSize;
     this.socket = socket;
-    this.id = uuidv4();
     this.fileInfo = null;
 
     this.lock = new AsyncLock();
@@ -19,21 +22,16 @@ module.exports = class FileShare {
     socket.emit("server:session-info", {
       id: this.id,
       chunkSize: this.chunkSize,
+      ownerSecret: this.ownerSecret, // this is a token that the owner uses to auth HTTP requests
     });
 
     this.socket.on("client:file-info", (fileInfo) => {
-      console.log("FILE INFO FROM CLIENT: ", fileInfo);
+      debug("FILE INFO FROM CLIENT: ", fileInfo);
       this.fileInfo = fileInfo;
     });
 
     this.socket.on("client:send-chunk", async (chunkIdx, data) => {
-      console.log("RECEIVED CHUNK: ", chunkIdx, data);
-      await this.lock.acquire(chunkIdx, async () => {
-        await cache.put(this.id + "/" + chunkIdx, data);
-        for (const chunkWaiter of this.chunkWaiters[chunkIdx]) {
-          chunkWaiter(data);
-        }
-      });
+      await this.deliverChunk(chunkIdx, data);
     });
   }
 
@@ -45,22 +43,42 @@ module.exports = class FileShare {
         return reject(new Error("chunk index out of range: " + chunkIdx));
       }
 
-      // emit a chunk request if this chunk has not yet been fetched
-      if (!this.requestedChunks[chunkIdx]) {
-        this.requestedChunks[chunkIdx] = true;
-        this.socket.emit("server:request-chunk", chunkIdx);
-        console.log("requesting chunk from client");
-      } else console.log("waiting for chunk from cache");
-
       this.lock.acquire(chunkIdx, async () => {
         const data = await cache.get(this.id + "/" + chunkIdx);
         if (data) {
+          debug("getChunk() found chunk %o in cache, returning", chunkIdx);
           accept(data);
         } else {
+          if (!this.requestedChunks[chunkIdx]) {
+            debug("getChunk() requesting chunk %o from client", chunkIdx);
+            this.socket.emit("server:request-chunk", chunkIdx);
+            delete this.requestedChunks[chunkIdx];
+          } else
+            debug(
+              "getChunk(): chunk %o has been requested, waiting for result",
+              chunkIdx
+            );
+
           if (!this.chunkWaiters[chunkIdx]) this.chunkWaiters[chunkIdx] = [];
           this.chunkWaiters[chunkIdx].push(accept);
         }
       });
+    });
+  }
+
+  async deliverChunk(chunkIdx, data) {
+    debug(
+      "deliverChunk(): chunk %o delivered, bytes: %o",
+      chunkIdx,
+      data.length
+    );
+    delete this.requestedChunks[chunkIdx];
+
+    await this.lock.acquire(chunkIdx, async () => {
+      await cache.put(this.id + "/" + chunkIdx, data);
+      for (const chunkWaiter of this.chunkWaiters[chunkIdx]) {
+        chunkWaiter(data);
+      }
     });
   }
 
