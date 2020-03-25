@@ -22,6 +22,7 @@ const awaitEvent = async (emitter, event) => {
   handle requests for a file share
 */
 
+app.use(require("cors"));
 app.use(morgan("combined"));
 
 const fileRouter = express.Router({ mergeParams: true });
