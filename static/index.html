@@ -1,0 +1,152 @@
+<html>
+  <head>
+    <script
+      src="https://code.jquery.com/jquery-3.4.1.min.js"
+      integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo="
+      crossorigin="anonymous"
+    ></script>
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
+      integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T"
+      crossorigin="anonymous"
+    />
+
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+
+  <style>
+    body {
+      background-color: rgb(30, 30, 30);
+      background-image: url("/img/prism.png");
+      background-repeat: repeat;
+
+      color: white;
+    }
+
+    #dropzone {
+      width: 100%;
+      height: 300px;
+      padding-top: 140px;
+      border: 2px dashed #ccc;
+      border-radius: 10px;
+      text-align: center;
+      background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    #content {
+      background-color: rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+    }
+
+    #uploadingstats {
+      margin: 20px;
+    }
+
+    a {
+      color: rgb(220, 220, 220);
+    }
+    a:visited {
+      color: rgb(220, 220, 220);
+    }
+    a:hover {
+      color: white;
+    }
+    a:active {
+      color: white;
+    }
+  </style>
+
+  <body>
+    <div class="container">
+      <h1 style="text-align: center">HarmonyShare</h1>
+      <br />
+
+      <div id="content">
+        <div id="dropzone">
+          Drop Files Here
+        </div>
+
+        <div id="uploadingstats">
+          <div id="uploadinfo"></div>
+        </div>
+      </div>
+    </div>
+  </body>
+
+  <script>
+    const socket = io.connect("/sharefile");
+    let sessionInfo = null;
+    let file = null;
+    let fileInfo = null;
+
+    socket.on("server:session-info", (_sessionInfo) => {
+      sessionInfo = _sessionInfo;
+    });
+
+    socket.on("server:request-chunk", (chunkIdx) => {
+      file
+        .slice(
+          sessionInfo.chunkSize * chunkIdx,
+          sessionInfo.chunkSize * (chunkIdx + 1)
+        )
+        .arrayBuffer()
+        .then((buffer) => {
+          socket.emit("client:send-chunk", chunkIdx, buffer);
+        });
+    });
+
+    // Setup the dnd listeners.
+    var dropZone = document.getElementById("dropzone");
+    dropZone.addEventListener(
+      "dragover",
+      (evt) => {
+        evt.stopPropagation();
+        evt.preventDefault();
+        evt.dataTransfer.dropEffect = "copy"; // Explicitly show this is a copy.
+      },
+      false
+    );
+    dropZone.addEventListener(
+      "drop",
+      (evt) => {
+        evt.stopPropagation();
+        evt.preventDefault();
+
+        const files = evt.dataTransfer.files; // FileList object.
+
+        file = files[0];
+
+        const dropZone = document.getElementById("dropzone");
+        dropZone.parentElement.removeChild(dropZone);
+        document.getElementById("uploadingstats").style.visibility = "visible";
+
+        $("#uploadinfo").append(
+          "<div><strong>Sharing File:</strong> " + file.name + "</div>"
+        );
+        $("#uploadinfo").append(
+          "<div><strong>Share UUID:</strong> " + sessionInfo.id + "</div>"
+        );
+
+        const fileURL =
+          "http://" + window.location.host + "/share/" + sessionInfo.id;
+        $("#uploadinfo").append(
+          "<div><strong>File Share Link: </strong><a href='" +
+            fileURL +
+            "' target='_blank'>" +
+            fileURL +
+            "</a></div>"
+        );
+
+        fileInfo = {
+          mimetype: file.type,
+          fileName: file.name,
+          fileSize: file.size,
+        };
+
+        socket.emit("client:file-info", fileInfo);
+      },
+      false
+    );
+  </script>
+</html>
