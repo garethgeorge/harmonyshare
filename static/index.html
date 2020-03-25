@@ -56,6 +56,33 @@
     a:active {
       color: white;
     }
+
+    .myprogress {
+      background-color: rgba(255, 255, 255, 0.2);
+      border-radius: 0px;
+      width: fit-content;
+      display: flex;
+      flex-direction: horizontal;
+      flex-wrap: wrap;
+    }
+
+    .myprogress .box {
+      width: 4px;
+      height: 4px;
+      margin: 0px;
+    }
+
+    .myprogress .box.green {
+      background-color: green;
+    }
+
+    .myprogress .box.red {
+      background-color: red;
+    }
+
+    .myprogress .box.orange {
+      background-color: orange;
+    }
   </style>
 
   <body>
@@ -95,6 +122,7 @@
         let sessionInfo = null;
         let file = files[0];
         let fileInfo = null;
+        let boxes = [];
         console.log("opening a socket to handle the drop... ", socket);
 
         socket.on("server:session-info", (_sessionInfo) => {
@@ -130,6 +158,20 @@
               "</a></div>"
           );
 
+          const chunkCount = Math.ceil(file.size / sessionInfo.chunkSize);
+
+          const myprogressBar = $("<div class='myprogress'></div>");
+          for (let i = 0; i < chunkCount; ++i) {
+            const redBox = document.createElement("div");
+            redBox.classList.add("box");
+            redBox.classList.add("red");
+
+            boxes.push(redBox);
+            myprogressBar.append($(redBox));
+          }
+
+          $(uploadingStatsDiv).append(myprogressBar);
+
           fileInfo = {
             mimetype: file.type,
             fileName: file.name,
@@ -138,11 +180,13 @@
 
           socket.emit("client:file-info", fileInfo);
 
-          $("#wrapper").append(uploadingStatsDiv);
+          const statsDiv = $("#wrapper").append(uploadingStatsDiv);
           console.log("appending to ", $("#wrapper"));
         });
 
         socket.on("server:request-chunk", (chunkIdx) => {
+          $(boxes[chunkIdx]).addClass("orange");
+          $(boxes[chunkIdx]).removeClass("red");
           file
             .slice(
               sessionInfo.chunkSize * chunkIdx,
@@ -163,6 +207,10 @@
               );
               xhr.setRequestHeader("Content-Type", "application/octet-stream");
               xhr.send(buffer);
+              xhr.onload = () => {
+                $(boxes[chunkIdx]).addClass("green");
+                $(boxes[chunkIdx]).removeClass("orange");
+              };
             });
         });
       },
