@@ -5,7 +5,10 @@ const debug = require("debug")("model:fileshare");
 const crypto = require("crypto");
 const config = require("../../config.js");
 
-const cache = new DiskCache(config.CACHE_LOCATION, config.CACHE_SIZE_MB);
+const cache = new DiskCache(
+  config.CACHE_LOCATION,
+  config.CACHE_SIZE_MB * 1024 * 1024
+);
 
 module.exports = class FileShare {
   constructor(socket, chunkSize) {
