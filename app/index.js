@@ -5,6 +5,7 @@ const debug = require("debug")("app");
 const express = require("express");
 const morgan = require("morgan");
 const bodyParser = require("body-parser");
+const config = require("../config");
 
 const FileShare = require("./model/fileshare");
 const fileShares = {};
@@ -14,8 +15,6 @@ const awaitEvent = async (emitter, event) => {
     emitter.once(event, accept);
   });
 };
-
-const DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
 /*
   handle requests for a file share
@@ -153,7 +152,7 @@ const server = http.createServer(app);
 const io = require("socket.io").listen(server);
 
 io.of("/sharefile").on("connection", (socket) => {
-  const newShare = new FileShare(socket, DEFAULT_CHUNK_SIZE);
+  const newShare = new FileShare(socket, config.CHUNK_SIZE_BYTES);
   fileShares[newShare.id] = newShare;
 
   socket.on("disconnect", () => {

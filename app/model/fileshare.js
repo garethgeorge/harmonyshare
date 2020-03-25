@@ -3,8 +3,9 @@ const AsyncLock = require("async-lock");
 const uuidv4 = require("uuid").v4;
 const debug = require("debug")("model:fileshare");
 const crypto = require("crypto");
+const config = require("../../config.js");
 
-const cache = new DiskCache("./.cache", 8 * 1073741824);
+const cache = new DiskCache(config.CACHE_LOCATION, config.CACHE_SIZE_MB);
 
 module.exports = class FileShare {
   constructor(socket, chunkSize) {
