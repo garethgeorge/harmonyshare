@@ -83,6 +83,7 @@ module.exports = class FileShare {
       for (const chunkWaiter of this.chunkWaiters[chunkIdx]) {
         chunkWaiter(data);
       }
+      delete this.chunkWaiters[chunkIdx];
     });
   }
 
