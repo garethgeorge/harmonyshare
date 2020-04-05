@@ -15,15 +15,21 @@ module.exports = class FileShare {
     this.id = crypto.randomBytes(8).toString("hex");
     this.ownerSecret = crypto.randomBytes(8).toString("hex"); // secret sent to owner, used to authenticate
     this.chunkSize = chunkSize;
-    this.socket = socket;
     this.fileInfo = null;
 
-    this.lock = new AsyncLock();
+    this.lock = new AsyncLock(); // no locks blocking for more than 10 seconds
     this.chunkWaiters = {};
     this.requestedChunks = {};
 
+    this.setSocket(socket);
+  }
+
+  setSocket(socket) {
+    this.socket = socket;
+    debug("attaching new socket to session " + this.id);
+
     // put the chunk in the cache
-    socket.emit("server:session-info", {
+    this.socket.emit("server:session-info", {
       id: this.id,
       chunkSize: this.chunkSize,
       ownerSecret: this.ownerSecret, // this is a token that the owner uses to auth HTTP requests
@@ -37,6 +43,13 @@ module.exports = class FileShare {
     this.socket.on("client:send-chunk", async (chunkIdx, data) => {
       await this.deliverChunk(chunkIdx, data);
     });
+
+    for (const chunkIdx of Object.keys(this.requestedChunks)) {
+      debug(
+        `sesion ${this.id} found that chunk ${chunkIdx} was requested but no delivered, rerequesting`
+      );
+      this.socket.emit("server:request-chunk", parseInt(chunkIdx));
+    }
   }
 
   getChunk(chunkIdx) {

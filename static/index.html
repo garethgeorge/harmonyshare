@@ -87,7 +87,7 @@
 
   <body>
     <div class="container" id="wrapper">
-      <h1 style="text-align: center">HarmonyShare</h1>
+      <h1 style="text-align: center;">HarmonyShare</h1>
       <br />
 
       <div class="content">
@@ -125,7 +125,34 @@
         let boxes = [];
         console.log("opening a socket to handle the drop... ", socket);
 
+        /*
+        // useful for testing socket disconnect / reconnect resiliance 
+        setInterval(() => {
+          socket.disconnect();
+        }, 10000);
+
+        setTimeout(() => {
+          setInterval(() => {
+            socket.connect();
+          }, 10000);
+        }, 2000);
+        */
+
+        socket.on("connect", () => {
+          if (!sessionInfo) {
+            socket.emit("client:make-new-session");
+          } else
+            socket.emit(
+              "client:reconnect",
+              sessionInfo.id,
+              sessionInfo.ownerSecret
+            );
+        });
+
+        socket.on("server:error", alert);
+
         socket.on("server:session-info", (_sessionInfo) => {
+          if (sessionInfo) return;
           sessionInfo = _sessionInfo;
 
           // const dropZone = document.getElementById("dropzone");
@@ -185,6 +212,7 @@
         });
 
         socket.on("server:request-chunk", (chunkIdx) => {
+          console.log("received request for chunk: " + chunkIdx);
           $(boxes[chunkIdx]).addClass("orange");
           $(boxes[chunkIdx]).removeClass("red");
           file

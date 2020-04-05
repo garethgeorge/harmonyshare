@@ -155,11 +155,58 @@ const server = http.createServer(app);
 const io = require("socket.io").listen(server);
 
 io.of("/sharefile").on("connection", (socket) => {
-  const newShare = new FileShare(socket, config.CHUNK_SIZE_BYTES);
-  fileShares[newShare.id] = newShare;
+  let madeSession = false;
+  socket.on("client:make-new-session", () => {
+    if (madeSession) return;
+    madeSession = true;
 
-  socket.on("disconnect", () => {
-    delete fileShares[newShare.id];
+    const myShare = new FileShare(socket, config.CHUNK_SIZE_BYTES);
+    fileShares[myShare.id] = myShare;
+
+    console.log("MADE NEW SHARE: ", myShare.id);
+
+    socket.on("disconnect", () => {
+      console.log(
+        `WARNING: socket lost for session ${myShare.id} cleaning up in 1 hours`
+      );
+      fileShares[myShare.id].cleanupTimeout = setTimeout(() => {
+        delete fileShares[myShare.id];
+      }, 3600 * 1000);
+    });
+  });
+
+  socket.on("client:reconnect", (id, ownerSecret) => {
+    const myShare = fileShares[id];
+    if (!myShare) {
+      socket.emit(
+        "server:error",
+        `WARNING: reconnect is too late, share no longer available`
+      );
+      socket.disconnect();
+      return;
+    }
+    if (ownerSecret !== myShare.ownerSecret) {
+      socket.emit(
+        "server:error",
+        `WARNING: reconnect for session ${myShare.id} failed, wrong ownerSecret`
+      );
+      socket.disconnect();
+      return;
+    }
+
+    console.log(`YAY: owner reconnected for session ${myShare.id}`);
+
+    clearTimeout(fileShares[myShare.id].cleanupTimeout);
+    fileShares[myShare.id].setSocket(socket);
+
+    socket.on("disconnect", () => {
+      console.log(
+        `WARNING: socket lost for session ${myShare.id} cleaning up in 1 hours`
+      );
+      fileShares[myShare.id].cleanupTimeout = setTimeout(() => {
+        delete fileShares[myShare.id];
+      }, 24 * 3600 * 1000);
+    });
   });
 });
 
